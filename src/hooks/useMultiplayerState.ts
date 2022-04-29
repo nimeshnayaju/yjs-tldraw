@@ -1,5 +1,6 @@
 import { TDBinding, TDShape, TDUser, TldrawApp } from "@tldraw/tldraw";
 import { useCallback, useEffect, useState } from "react";
+import { Room } from "@y-presence/client";
 import {
   awareness,
   doc,
@@ -8,54 +9,49 @@ import {
   yBindings,
   yShapes
 } from "../store";
-import { User } from "../types";
-import { useUser } from "./useUser";
+import type { TldrawPresence } from "../types";
 
-/**
- * Undo/Redo doesn't work correctly, especially around TDBinding
- * This is inspired by the current implementation of multiplayer in the tldraw app
- * See https://github.com/tldraw/tldraw/blob/main/apps/www/hooks/useMultiplayerState.ts
- */
+const room = new Room(awareness);
+
 export function useMultiplayerState(roomId: string) {
   const [app, setApp] = useState<TldrawApp>();
   const [loading, setLoading] = useState(true);
 
-  const { user: self, updateUserPoint } = useUser();
-
   const onMount = useCallback(
     (app: TldrawApp) => {
       app.loadRoom(roomId);
-      window.app = app;
       app.pause();
       setApp(app);
     },
     [roomId]
   );
 
-  const onChangePage = (
-    app: TldrawApp,
-    shapes: Record<string, TDShape | undefined>,
-    bindings: Record<string, TDBinding | undefined>
-  ) => {
-    if (!(yShapes && yBindings)) return;
-    undoManager.stopCapturing();
-    doc.transact(() => {
-      Object.entries(shapes).forEach(([id, shape]) => {
-        if (!shape) {
-          yShapes.delete(id);
-        } else {
-          yShapes.set(shape.id, shape);
-        }
+  const onChangePage = useCallback(
+    (
+      app: TldrawApp,
+      shapes: Record<string, TDShape | undefined>,
+      bindings: Record<string, TDBinding | undefined>
+    ) => {
+      undoManager.stopCapturing();
+      doc.transact(() => {
+        Object.entries(shapes).forEach(([id, shape]) => {
+          if (!shape) {
+            yShapes.delete(id);
+          } else {
+            yShapes.set(shape.id, shape);
+          }
+        });
+        Object.entries(bindings).forEach(([id, binding]) => {
+          if (!binding) {
+            yBindings.delete(id);
+          } else {
+            yBindings.set(binding.id, binding);
+          }
+        });
       });
-      Object.entries(bindings).forEach(([id, binding]) => {
-        if (!binding) {
-          yBindings.delete(id);
-        } else {
-          yBindings.set(binding.id, binding);
-        }
-      });
-    });
-  };
+    },
+    []
+  );
 
   const onUndo = useCallback(() => {
     undoManager.undo();
@@ -65,76 +61,74 @@ export function useMultiplayerState(roomId: string) {
     undoManager.redo();
   }, []);
 
-  const onChangePresence = useCallback(
-    (app: TldrawApp, user: TDUser) => {
-      updateUserPoint(app.room!.userId, user);
-    },
-    [updateUserPoint]
-  );
+  /**
+   * Callback to update user's (self) presence
+   */
+  const onChangePresence = useCallback((app: TldrawApp, user: TDUser) => {
+    if (!app.room) return;
+    room.setPresence<TldrawPresence>({ id: app.room.userId, tdUser: user });
+  }, []);
 
+  /**
+   * Update app users whenever there is a change in the room users
+   */
   useEffect(() => {
-    function updateUsersState() {
-      if (!app) return;
-      const users = Array.from(
-        awareness.getStates().values() as IterableIterator<User>
-      );
+    if (!app || !room) return;
+
+    const unsubOthers = room.subscribe<TldrawPresence>("others", (users) => {
+      if (!app.room) return;
+
+      const ids = users
+        .filter((user) => user.presence)
+        .map((user) => user.presence!.tdUser.id);
+
+      Object.values(app.room.users).forEach((user) => {
+        if (user && !ids.includes(user.id) && user.id !== app.room?.userId) {
+          app.removeUser(user.id);
+        }
+      });
 
       app.updateUsers(
         users
-          .filter((user) => user.tdUser && user.id !== self.id)
-          .map((user) => user.tdUser!)
+          .filter((user) => user.presence)
+          .map((other) => other.presence!.tdUser)
           .filter(Boolean)
       );
-    }
+    });
 
-    updateUsersState();
-
-    awareness.on("change", updateUsersState);
     return () => {
-      awareness.off("change", updateUsersState);
+      unsubOthers();
     };
-  }, [app, self]);
+  }, [app]);
 
   useEffect(() => {
-    function handleConnect() {
-      app?.replacePageContent(
-        Object.fromEntries(yShapes.entries()),
-        Object.fromEntries(yBindings.entries())
-      );
-      setLoading(false);
-    }
+    if (!app) return;
 
     function handleDisconnect() {
-      provider.off("sync", handleConnect);
       provider.disconnect();
     }
 
     window.addEventListener("beforeunload", handleDisconnect);
 
-    provider.on("sync", handleConnect);
-
-    provider.connect();
-
-    return () => {
-      handleDisconnect();
-      window.removeEventListener("beforeunload", handleDisconnect);
-    };
-  }, [app]);
-
-  useEffect(() => {
-    function handleChange() {
+    function handleChanges() {
       app?.replacePageContent(
         Object.fromEntries(yShapes.entries()),
-        Object.fromEntries(yBindings.entries())
+        Object.fromEntries(yBindings.entries()),
+        {}
       );
     }
 
-    // Guessing that change in any binding involves change in the related shapes,
-    // hence triggering a change in yShapes eventually
-    yShapes.observeDeep(handleChange);
+    async function setup() {
+      yShapes.observeDeep(handleChanges);
+      handleChanges();
+      setLoading(false);
+    }
+
+    setup();
 
     return () => {
-      yShapes.unobserveDeep(handleChange);
+      window.removeEventListener("beforeunload", handleDisconnect);
+      yShapes.unobserveDeep(handleChanges);
     };
   }, [app]);
 

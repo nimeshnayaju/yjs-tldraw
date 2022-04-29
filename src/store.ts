@@ -2,10 +2,12 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { TDBinding, TDShape } from "@tldraw/tldraw";
 
+const VERSION = 1;
+
 // Create the doc
 export const doc = new Y.Doc();
 
-export const roomID = "y-tldraw";
+export const roomID = `y-tldraw-${VERSION}`;
 
 // Create a websocket provider
 export const provider = new WebsocketProvider(
@@ -13,7 +15,7 @@ export const provider = new WebsocketProvider(
   roomID,
   doc,
   {
-    connect: false
+    connect: true
   }
 );
 
