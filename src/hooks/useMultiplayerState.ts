@@ -1,6 +1,5 @@
 import { TDBinding, TDShape, TDUser, TldrawApp } from "@tldraw/tldraw";
 import { useCallback, useEffect, useState } from "react";
-import { Room } from "@y-presence/client";
 import {
   awareness,
   doc,
@@ -9,9 +8,6 @@ import {
   yBindings,
   yShapes
 } from "../store";
-import type { TldrawPresence } from "../types";
-
-const room = new Room(awareness);
 
 export function useMultiplayerState(roomId: string) {
   const [app, setApp] = useState<TldrawApp>();
@@ -66,21 +62,23 @@ export function useMultiplayerState(roomId: string) {
    */
   const onChangePresence = useCallback((app: TldrawApp, user: TDUser) => {
     if (!app.room) return;
-    room.setPresence<TldrawPresence>({ id: app.room.userId, tdUser: user });
+    // room.({ id: app.room.userId, tdUser: user });
+    awareness.setLocalStateField("tdUser", user);
   }, []);
 
   /**
    * Update app users whenever there is a change in the room users
    */
   useEffect(() => {
-    if (!app || !room) return;
+    const onChangeAwareness = () => {
+      if (!app || !app.room) return;
 
-    const unsubOthers = room.subscribe<TldrawPresence>("others", (users) => {
-      if (!app.room) return;
+      const others = Array.from(awareness.getStates().entries())
+        .filter(([key, _]) => key !== awareness.clientID)
+        .map(([_, state]) => state)
+        .filter((user) => user.tdUser !== undefined);
 
-      const ids = users
-        .filter((user) => user.presence)
-        .map((user) => user.presence!.tdUser.id);
+      const ids = others.map((other) => other.tdUser.id as string);
 
       Object.values(app.room.users).forEach((user) => {
         if (user && !ids.includes(user.id) && user.id !== app.room?.userId) {
@@ -88,22 +86,15 @@ export function useMultiplayerState(roomId: string) {
         }
       });
 
-      app.updateUsers(
-        users
-          .filter((user) => user.presence)
-          .map((other) => other.presence!.tdUser)
-          .filter(Boolean)
-      );
-    });
-
-    return () => {
-      unsubOthers();
+      app.updateUsers(others.map((other) => other.tdUser).filter(Boolean));
     };
+
+    awareness.on("change", onChangeAwareness);
+
+    return () => awareness.off("change", onChangeAwareness);
   }, [app]);
 
   useEffect(() => {
-    if (!app) return;
-
     function handleDisconnect() {
       provider.disconnect();
     }
@@ -111,7 +102,9 @@ export function useMultiplayerState(roomId: string) {
     window.addEventListener("beforeunload", handleDisconnect);
 
     function handleChanges() {
-      app?.replacePageContent(
+      if (!app) return;
+
+      app.replacePageContent(
         Object.fromEntries(yShapes.entries()),
         Object.fromEntries(yBindings.entries()),
         {}

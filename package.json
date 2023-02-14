@@ -8,11 +8,11 @@
     "@tldraw/tldraw": "1.9.3",
     "@types/react": "17.0.38",
     "@types/react-dom": "17.0.11",
-    "@y-presence/client": "1.1.8",
     "mobx": "6.3.10",
     "react": "17.0.2",
     "react-dom": "17.0.2",
     "react-scripts": "4.0.3",
+    "y-presence": "0.2.3",
     "y-websocket": "1.4.0",
     "yjs": "13.6.0-2"
   },

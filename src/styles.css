@@ -25,12 +25,26 @@ a {
   height: 100%;
 }
 
-a.twitter {
+.p-md {
+  padding: 12px;
+}
+
+.flex {
+  display: flex;
+}
+
+.space-between {
+  justify-content: space-between;
+}
+
+.color-dodgerblue {
+  color: dodgerblue;
+}
+
+.absolute {
   position: absolute;
   z-index: 100;
-  left: 90px;
-  top: 10px;
-  font-weight: 600;
-  color: dodgerblue;
-  user-select: none;
+  left: 0;
+  right: 0;
+  top: 40px;
 }
