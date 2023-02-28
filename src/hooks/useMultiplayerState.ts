@@ -1,5 +1,5 @@
 import { TDBinding, TDShape, TDUser, TldrawApp } from "@tldraw/tldraw";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   awareness,
   doc,
@@ -10,14 +10,19 @@ import {
 } from "../store";
 
 export function useMultiplayerState(roomId: string) {
-  const [app, setApp] = useState<TldrawApp>();
-  const [loading, setLoading] = useState(true);
+  const tldrawRef = useRef<TldrawApp>();
 
   const onMount = useCallback(
     (app: TldrawApp) => {
       app.loadRoom(roomId);
       app.pause();
-      setApp(app);
+      tldrawRef.current = app;
+
+      app.replacePageContent(
+        Object.fromEntries(yShapes.entries()),
+        Object.fromEntries(yBindings.entries()),
+        {}
+      );
     },
     [roomId]
   );
@@ -61,8 +66,6 @@ export function useMultiplayerState(roomId: string) {
    * Callback to update user's (self) presence
    */
   const onChangePresence = useCallback((app: TldrawApp, user: TDUser) => {
-    if (!app.room) return;
-    // room.({ id: app.room.userId, tdUser: user });
     awareness.setLocalStateField("tdUser", user);
   }, []);
 
@@ -71,7 +74,9 @@ export function useMultiplayerState(roomId: string) {
    */
   useEffect(() => {
     const onChangeAwareness = () => {
-      if (!app || !app.room) return;
+      const tldraw = tldrawRef.current;
+
+      if (!tldraw || !tldraw.room) return;
 
       const others = Array.from(awareness.getStates().entries())
         .filter(([key, _]) => key !== awareness.clientID)
@@ -80,57 +85,52 @@ export function useMultiplayerState(roomId: string) {
 
       const ids = others.map((other) => other.tdUser.id as string);
 
-      Object.values(app.room.users).forEach((user) => {
-        if (user && !ids.includes(user.id) && user.id !== app.room?.userId) {
-          app.removeUser(user.id);
+      Object.values(tldraw.room.users).forEach((user) => {
+        if (user && !ids.includes(user.id) && user.id !== tldraw.room?.userId) {
+          tldraw.removeUser(user.id);
         }
       });
 
-      app.updateUsers(others.map((other) => other.tdUser).filter(Boolean));
+      tldraw.updateUsers(others.map((other) => other.tdUser).filter(Boolean));
     };
 
     awareness.on("change", onChangeAwareness);
 
     return () => awareness.off("change", onChangeAwareness);
-  }, [app]);
+  }, []);
 
   useEffect(() => {
-    function handleDisconnect() {
-      provider.disconnect();
-    }
-
-    window.addEventListener("beforeunload", handleDisconnect);
-
     function handleChanges() {
-      if (!app) return;
+      const tldraw = tldrawRef.current;
 
-      app.replacePageContent(
+      if (!tldraw) return;
+
+      tldraw.replacePageContent(
         Object.fromEntries(yShapes.entries()),
         Object.fromEntries(yBindings.entries()),
         {}
       );
     }
 
-    async function setup() {
-      yShapes.observeDeep(handleChanges);
-      handleChanges();
-      setLoading(false);
+    yShapes.observeDeep(handleChanges);
+
+    return () => yShapes.unobserveDeep(handleChanges);
+  }, []);
+
+  useEffect(() => {
+    function handleDisconnect() {
+      provider.disconnect();
     }
+    window.addEventListener("beforeunload", handleDisconnect);
 
-    setup();
-
-    return () => {
-      window.removeEventListener("beforeunload", handleDisconnect);
-      yShapes.unobserveDeep(handleChanges);
-    };
-  }, [app]);
+    return () => window.removeEventListener("beforeunload", handleDisconnect);
+  }, []);
 
   return {
     onMount,
     onChangePage,
     onUndo,
     onRedo,
-    loading,
     onChangePresence
   };
 }
